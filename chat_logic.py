@@ -1,59 +1,43 @@
 import sqlite3
 import re
 
-DB_PATH = "database/products.db"
+def get_local_response(user_message):
+    conn = sqlite3.connect('database/products.db')
+    cursor = conn.cursor()
 
-def get_gpt_response(user_message):
     user_message = user_message.lower()
+    response = "❌ Sorry, I couldn't find relevant products for that."
 
-    # Extract price limit (e.g., "under 300", "below 500")
-    price_limit = None
-    price_match = re.search(r"(under|below|less than)\s*(\d+)", user_message)
+    # Detect price filter
+    price_match = re.search(r'under\s*(\d+)', user_message)
+    keyword_match = re.search(r'products|items|show|find|buy|search', user_message)
+
     if price_match:
-        price_limit = float(price_match.group(2))
-
-    # Try to extract keyword (e.g., "candles", "books")
-    keywords = re.findall(r"\b[a-z]+\b", user_message)
-    ignore = {"under", "below", "than", "show", "me", "buy", "get", "items", "products", "price", "cheap", "cost", "the", "a", "i", "want", "for", "to"}
-    filtered_keywords = [word for word in keywords if word not in ignore]
-
-    if not filtered_keywords and price_limit is None:
-        return "❌ I couldn't understand your request. Try something like 'candles under 100'."
-
-    # Build SQL query
-    query = "SELECT name, price FROM products WHERE 1=1"
-    params = []
-
-    if filtered_keywords:
-        keyword_clauses = []
-        for word in filtered_keywords:
-            keyword_clauses.append("LOWER(name) LIKE ?")
-            params.append(f"%{word}%")
-        query += " AND (" + " OR ".join(keyword_clauses) + ")"
-
-    if price_limit:
-        query += " AND price <= ?"
-        params.append(price_limit)
-
-    return run_sql_query(query, params)
-
-def run_sql_query(query, params):
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(query, params)
+        max_price = float(price_match.group(1))
+        cursor.execute("SELECT name, price FROM products WHERE price <= ? ORDER BY price ASC LIMIT 5", (max_price,))
         results = cursor.fetchall()
-        conn.close()
 
-        if not results:
-            return "❌ No matching products found."
+        if results:
+            response = "🛍️ Here are some products under ₹{}:\n".format(int(max_price))
+            for name, price in results:
+                response += f"- {name} – ₹{price:.2f}\n"
+        else:
+            response = f"❌ No products found under ₹{int(max_price)}."
 
-        # Show top 5 products
-        message = "🛍️ Here are some products I found:\n"
-        for name, price in results[:5]:
-            message += f"- {name} – ₹{price:.2f}\n"
+    elif any(word in user_message for word in ['card', 'bag', 'mug', 'candle', 'hook', 'cup', 'gift']):
+        keyword = next(word for word in user_message.split() if word in user_message)
+        cursor.execute("SELECT name, price FROM products WHERE name LIKE ? LIMIT 5", ('%' + keyword + '%',))
+        results = cursor.fetchall()
 
-        return message.strip()
+        if results:
+            response = f"🛒 Products matching '{keyword}':\n"
+            for name, price in results:
+                response += f"- {name} – ₹{price:.2f}\n"
+        else:
+            response = f"❌ No matching products found for '{keyword}'."
 
-    except Exception as e:
-        return f"⚠️ Failed to run query: {str(e)}"
+    elif "hello" in user_message or "hi" in user_message:
+        response = "👋 Hi there! I'm Uplyft AI. You can ask me to show products, like 'show me candles under 300' or 'find me a gift'."
+
+    conn.close()
+    return response
